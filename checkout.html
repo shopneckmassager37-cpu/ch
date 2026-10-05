@@ -626,6 +626,7 @@
       if (!r.ok || data.error) throw new Error(data.error || 'Failed to place order');
       if (typeof window.chefalehTrack === 'function') window.chefalehTrack('order_submitted', `Zone ${deliveryZoneNum}`, total);
       sessionStorage.setItem('chefaleh_last_total', total.toFixed(2));
+      if (data.orderId) sessionStorage.setItem('chefaleh_last_order_id', data.orderId);
       localStorage.removeItem(CART_KEY);
       window.location.href = '/confirmation';
     })

@@ -124,9 +124,17 @@
 <script>
   // Show total from localStorage if present (set by checkout before clearing cart)
   const stored = sessionStorage.getItem('chefaleh_last_total');
+  const storedOrderId = sessionStorage.getItem('chefaleh_last_order_id');
   if (stored) {
     document.getElementById('final-total').textContent = '$' + parseFloat(stored).toFixed(2);
+    gtag('event', 'conversion', {
+      'send_to': 'AW-18352228648/iGUeCMTTzNscEKiSg69E',
+      'value': parseFloat(stored),
+      'currency': 'USD',
+      'transaction_id': storedOrderId || ''
+    });
     sessionStorage.removeItem('chefaleh_last_total');
+    sessionStorage.removeItem('chefaleh_last_order_id');
   }
 </script>
 <script src="/analytics.js" defer></script>
