@@ -154,11 +154,10 @@ function getUpcomingFridays() {
   const miamiStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' });
   const miami = new Date(miamiStr);
   const day = miami.getDay(); // 0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat
-  const hour = miami.getHours();
-  const min = miami.getMinutes();
 
-  // Past deadline for THIS Friday? (Thu >= 2PM)
-  const pastDeadline = (day === 4 && (hour > 14 || (hour === 14 && min >= 0))) || (day > 4 && day <= 6);
+  // Past deadline for THIS Friday? Orders close Wednesday at midnight Miami
+  // time, so all of Thursday through Saturday is past deadline.
+  const pastDeadline = day >= 4 && day <= 6;
 
   let firstFriday = new Date(miami);
   firstFriday.setHours(0, 0, 0, 0);
