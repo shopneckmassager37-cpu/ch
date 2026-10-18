@@ -1,7 +1,7 @@
 import { createHmac } from 'crypto';
 import { Resend } from 'resend';
 import { sbAdminFetch } from '../lib/supabaseAdmin.js';
-import { classifyAddress, getZoneFees } from '../lib/deliveryZones.js';
+import { classifyAddress, getZoneFees, applyDriverTipDiscount } from '../lib/deliveryZones.js';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -146,13 +146,17 @@ export default async function handler(req, res) {
   if (!zoneInfo) {
     return res.status(500).json({ error: 'Delivery zone pricing not configured' });
   }
-  const delivery = zoneInfo.fee;
+  // A driver tip discounts the delivery fee dollar-for-dollar down to a $20
+  // floor (zones already at or below that floor — Zone 1 free, Zone 2 $20 —
+  // are unaffected either way).
+  const delivery = applyDriverTipDiscount(zoneInfo.fee, driverTip);
   const zoneNum = zoneResult.zoneNum;
   const distanceMiles = zoneResult.distanceMiles !== null && zoneResult.distanceMiles !== undefined
     ? Math.round(zoneResult.distanceMiles * 10) / 10
     : null;
   // The label always reflects our own recomputed zone, never whatever the client sent.
-  const zoneLabel = `${zoneInfo.label} (${delivery === 0 ? 'Free' : '$' + delivery.toFixed(2)})${distanceMiles !== null ? ` · ${distanceMiles} mi` : ''}`;
+  const discountNote = delivery < zoneInfo.fee ? ` · tip discount −$${(zoneInfo.fee - delivery).toFixed(2)}` : '';
+  const zoneLabel = `${zoneInfo.label} (${delivery === 0 ? 'Free' : '$' + delivery.toFixed(2)})${distanceMiles !== null ? ` · ${distanceMiles} mi` : ''}${discountNote}`;
 
   // Recompute the subtotal/tax server-side from real menu prices — never trust client-sent prices.
   let catalog;

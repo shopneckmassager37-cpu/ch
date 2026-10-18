@@ -151,7 +151,7 @@
           <div>
             <div class="sum-row"><span class="sum-label">Subtotal</span><span class="sum-val" id="co-sub">$0.00</span></div>
             <div class="sum-row"><span class="sum-label">Tax (7%)</span><span class="sum-val" id="co-tax">$0.00</span></div>
-            <div class="sum-row"><span class="sum-label">Delivery <span id="co-zone-label" class="text-charcoal/35 ml-1">—</span></span><span class="sum-val" id="co-delivery">—</span></div>
+            <div class="sum-row"><span class="sum-label">Delivery <span id="co-zone-label" class="text-charcoal/35 ml-1">—</span> <span id="co-delivery-discount" class="text-gold/70"></span></span><span class="sum-val" id="co-delivery">—</span></div>
             <div class="sum-row"><span class="sum-label">Chef Tip <span id="co-chef-label" class="text-charcoal/35 ml-1">15%</span></span><span class="sum-val" id="co-chef-tip">$0.00</span></div>
             <div class="sum-row"><span class="sum-label">Driver Tip <span id="co-driver-label" class="text-charcoal/35 ml-1">10%</span></span><span class="sum-val" id="co-driver-tip">$0.00</span></div>
           </div>
@@ -196,6 +196,17 @@
   let chefTipFixed = null;    // dollar amount when chef Custom is used
   let driverTipPct = 10;      // percentage-based driver tip
   let driverTipFixed = null;  // dollar amount when driver Custom is used
+
+  // A driver tip discounts the delivery fee dollar-for-dollar down to a $20
+  // floor; zones already at or below that floor (Zone 1 free, Zone 2 $20)
+  // are unaffected. Kept in sync with lib/deliveryZones.js's
+  // applyDriverTipDiscount(), which is what actually charges the order.
+  const DELIVERY_TIP_DISCOUNT_FLOOR = 20;
+  function applyDriverTipDiscount(baseFee, driverTip) {
+    if (baseFee === null || baseFee === undefined) return baseFee;
+    if (baseFee <= DELIVERY_TIP_DISCOUNT_FLOOR) return baseFee;
+    return Math.max(DELIVERY_TIP_DISCOUNT_FLOOR, baseFee - Math.max(0, driverTip));
+  }
 
   // ── DELIVERY DATE ──
   // The date is chosen earlier, in the cart drawer (see cart.js). This page
@@ -406,14 +417,20 @@
     const tax = sub * 0.07;
     const chefTip = chefTipFixed !== null ? chefTipFixed : sub * chefTipPct / 100;
     const driverTipAmt = driverTipFixed !== null ? driverTipFixed : sub * driverTipPct / 100;
-    const deliveryForTotal = deliveryZone !== null ? deliveryZone : 0;
+    const effectiveDelivery = deliveryZone !== null ? applyDriverTipDiscount(deliveryZone, driverTipAmt) : null;
+    const deliveryForTotal = effectiveDelivery !== null ? effectiveDelivery : 0;
     const total = sub + tax + deliveryForTotal + chefTip + driverTipAmt;
 
     const fmt = n => '$' + n.toFixed(2);
     const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
     set('co-sub', fmt(sub));
     set('co-tax', fmt(tax));
-    set('co-delivery', deliveryZone === null ? 'Contact us' : (deliveryZone === 0 ? 'Free' : fmt(deliveryZone)));
+    set('co-delivery', effectiveDelivery === null ? 'Contact us' : (effectiveDelivery === 0 ? 'Free' : fmt(effectiveDelivery)));
+    const discountEl = document.getElementById('co-delivery-discount');
+    if (discountEl) {
+      const discount = (deliveryZone !== null && effectiveDelivery !== null) ? deliveryZone - effectiveDelivery : 0;
+      discountEl.textContent = discount > 0 ? `(tip discount −${fmt(discount)})` : '';
+    }
     set('co-chef-tip', fmt(chefTip));
     set('co-driver-tip', fmt(driverTipAmt));
     set('co-tot', fmt(total));
@@ -601,7 +618,8 @@
     const tax = sub * 0.07;
     const chefTip = chefTipFixed !== null ? chefTipFixed : sub * chefTipPct / 100;
     const driverTip = driverTipFixed !== null ? driverTipFixed : sub * driverTipPct / 100;
-    const total = sub + tax + deliveryZone + chefTip + driverTip;
+    const effectiveDelivery = applyDriverTipDiscount(deliveryZone, driverTip);
+    const total = sub + tax + effectiveDelivery + chefTip + driverTip;
 
     const btn = document.getElementById('submit-btn');
     btn.textContent = 'Placing Order...';
@@ -616,13 +634,13 @@
       body: JSON.stringify({
         name, phone, email, address,
         deliveryDate: formatFriday(selectedFriday),
-        zone: `${deliveryZoneLabel || 'Zone ' + deliveryZoneNum} (${deliveryZone === 0 ? 'Free' : '$' + deliveryZone})`,
+        zone: `${deliveryZoneLabel || 'Zone ' + deliveryZoneNum} (${effectiveDelivery === 0 ? 'Free' : '$' + effectiveDelivery.toFixed(2)})`,
         zoneNum: deliveryZoneNum,
         distanceMiles: deliveryDistanceMiles,
         cart,
         subtotal: sub.toFixed(2),
         tax: tax.toFixed(2),
-        delivery: deliveryZone.toFixed(2),
+        delivery: effectiveDelivery.toFixed(2),
         driverTip: driverTip.toFixed(2),
         chefTip: chefTip.toFixed(2),
         total: total.toFixed(2),
