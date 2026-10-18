@@ -126,7 +126,7 @@
             <p id="err-co-address" class="field-err">Please enter your delivery address.</p>
           </div>
           <div id="area-warning" class="hidden md:col-span-2 p-4 text-xs leading-relaxed" style="background:#FBEAEA;border:1px solid #E3B4B4;color:#8A2E2E">
-            We don't currently deliver to this address. Message us on <a href="https://wa.me/13053076800" target="_blank" rel="noopener noreferrer" class="underline font-medium">WhatsApp</a> or call <a href="tel:+13059850770" class="underline font-medium">(305) 985-0770</a> to check availability before placing your order.
+            <span id="area-warning-text">We don't currently deliver to this address.</span> Message us on <a href="https://wa.me/13053076800" target="_blank" rel="noopener noreferrer" class="underline font-medium">WhatsApp</a> or call <a href="tel:+13059850770" class="underline font-medium">(305) 985-0770</a> to check availability before placing your order.
           </div>
           <textarea id="co-notes" class="field md:col-span-2" rows="3" placeholder="Special instructions (optional)" style="resize:none"></textarea>
         </div>
@@ -151,7 +151,7 @@
           <div>
             <div class="sum-row"><span class="sum-label">Subtotal</span><span class="sum-val" id="co-sub">$0.00</span></div>
             <div class="sum-row"><span class="sum-label">Tax (7%)</span><span class="sum-val" id="co-tax">$0.00</span></div>
-            <div class="sum-row"><span class="sum-label">Delivery <span id="co-zone-label" class="text-charcoal/35 ml-1">Area 2</span></span><span class="sum-val" id="co-delivery">Free</span></div>
+            <div class="sum-row"><span class="sum-label">Delivery <span id="co-zone-label" class="text-charcoal/35 ml-1">—</span></span><span class="sum-val" id="co-delivery">—</span></div>
             <div class="sum-row"><span class="sum-label">Chef Tip <span id="co-chef-label" class="text-charcoal/35 ml-1">15%</span></span><span class="sum-val" id="co-chef-tip">$0.00</span></div>
             <div class="sum-row"><span class="sum-label">Driver Tip <span id="co-driver-label" class="text-charcoal/35 ml-1">10%</span></span><span class="sum-val" id="co-driver-tip">$0.00</span></div>
           </div>
@@ -186,8 +186,12 @@
 <script>
   const CART_KEY = 'chefaleh_cart';
   const MIN_ORDER_SUBTOTAL = 250;
-  let deliveryZone = 0;
-  let deliveryZoneNum = 2;
+  // Unclassified until a real address is geocoded — never default to a free
+  // or guessed zone before we actually know where the order is going.
+  let deliveryZone = null;
+  let deliveryZoneNum = null;
+  let deliveryZoneLabel = null;
+  let deliveryDistanceMiles = null;
   let chefTipPct = 15;
   let chefTipFixed = null;    // dollar amount when chef Custom is used
   let driverTipPct = 10;      // percentage-based driver tip
@@ -281,38 +285,57 @@
     }
   }
 
-  // Delivery areas: keyword → fee. Area 1 & 2 are free; Area 3 has a flat
-  // fee; anything that matches nothing is outside our normal delivery area.
-  const AREA_RULES = [
-    {
-      fee: 0, num: 1, label: 'Area 1',
-      keywords: ['miami beach', 'bal harbour', 'surfside', 'aventura', 'hallandale', 'hollywood', 'sunny isles', 'bay harbor', 'north bay village', 'golden beach']
-    },
-    {
-      fee: 0, num: 2, label: 'Area 2',
-      keywords: ['miami', 'coral gables', 'coconut grove', 'brickell', 'downtown', 'wynwood', 'doral', 'hialeah', 'pembroke pines', 'miramar', 'north miami', 'miami springs', 'edgewater', 'midtown',
-        'kendall', 'opa-locka', 'opa locka', 'palmetto bay', 'cutler bay', 'el portal', 'biscayne park']
-    },
-    {
-      fee: 20, num: 3, label: 'Area 3',
-      keywords: ['fort lauderdale', 'boca raton', 'delray', 'pompano', 'weston', 'plantation', 'davie', 'sunrise', 'tamarac', 'coral springs', 'deerfield beach',
-        'lauderhill', 'oakland park', 'wilton manors', 'margate', 'north lauderdale', 'coconut creek', 'parkland', 'dania beach', 'cooper city', 'southwest ranches', 'homestead']
-    },
-  ];
+  // Delivery zones are classified server-side (lib/deliveryZones.js, via
+  // /api/delivery-zone) from real geocoding + driving distance — not string
+  // matching here. That's the same logic api/send-email.js re-runs to
+  // revalidate before an order is accepted, so there's one source of truth.
+  let zoneRequestSeq = 0; // guards against a slow, stale request overwriting a newer one
 
-  function detectZone(address) {
-    const lower = address.toLowerCase();
+  const ZONE_FAILURE_MESSAGES = {
+    not_found: "We couldn't find that address — please double-check it.",
+    geocoding_unavailable: "We couldn't verify that address right now — please try again in a moment.",
+    routing_unavailable: "We couldn't calculate the delivery distance right now — please try again in a moment.",
+    outside_area: "This address is outside our delivery area.",
+  };
 
-    for (const zone of AREA_RULES) {
-      for (const k of zone.keywords) {
-        // Regex for whole phrase/word match
-        const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`\\b${escaped}\\b`, 'i');
-        if (regex.test(lower)) return zone;
-      }
+  async function classifyAddressRemote(address) {
+    const seq = ++zoneRequestSeq;
+    const badge = document.getElementById('zone-badge');
+    if (badge) { badge.textContent = 'Detecting zone…'; badge.style.color = '#888'; }
+
+    let result;
+    try {
+      const res = await fetch(`/api/delivery-zone?address=${encodeURIComponent(address)}`);
+      result = await res.json();
+    } catch (e) {
+      result = { ok: false, reason: 'geocoding_unavailable' };
     }
+    if (seq !== zoneRequestSeq) return; // a newer request has already landed
 
-    return null; // outside our normal delivery area
+    if (result.ok) {
+      deliveryZone = result.fee;
+      deliveryZoneNum = result.zoneNum;
+      deliveryZoneLabel = result.label;
+      deliveryDistanceMiles = result.distanceMiles;
+      if (badge) {
+        badge.textContent = result.fee === 0
+          ? `Zone ${result.zoneNum} · Free`
+          : `Zone ${result.zoneNum}${result.distanceMiles != null ? ' · ' + result.distanceMiles + ' mi' : ''}`;
+        badge.style.color = '#D4AF37';
+      }
+    } else {
+      deliveryZone = null;
+      deliveryZoneNum = null;
+      deliveryZoneLabel = null;
+      deliveryDistanceMiles = result.distanceMiles ?? null;
+      if (badge) {
+        badge.textContent = 'Outside area';
+        badge.style.color = '#C0392B';
+      }
+      const areaWarningText = document.getElementById('area-warning-text');
+      if (areaWarningText) areaWarningText.textContent = ZONE_FAILURE_MESSAGES[result.reason] || ZONE_FAILURE_MESSAGES.outside_area;
+    }
+    updateTotals();
   }
 
   function readCart() {
@@ -395,7 +418,7 @@
     set('co-driver-tip', fmt(driverTipAmt));
     set('co-tot', fmt(total));
     const zEl = document.getElementById('co-zone-label');
-    if (zEl) zEl.textContent = deliveryZoneNum !== null ? `Area ${deliveryZoneNum}` : 'Outside Area';
+    if (zEl) zEl.textContent = deliveryZoneNum !== null ? `Zone ${deliveryZoneNum}` : 'Outside Area';
     const areaWarning = document.getElementById('area-warning');
     if (areaWarning) areaWarning.classList.toggle('hidden', deliveryZoneNum !== null);
 
@@ -511,32 +534,17 @@
   window.selectAddress = function(full, area) {
     addressInput.value = full;
     resultsDiv.style.display = 'none';
-    // Use the specific area (city/suburb) for better detection, but fall back to full string
-    onAddressInput(area + ' | ' + full);
-    if (typeof window.chefalehTrack === 'function') {
-      window.chefalehTrack('select_zone', deliveryZoneNum !== null ? `Area ${deliveryZoneNum}` : 'Outside area', deliveryZone);
-    }
+    // The full selected address geocodes far more reliably than a bare
+    // city/suburb name, so pass it straight through for classification.
+    onAddressInput(full).then(() => {
+      if (typeof window.chefalehTrack === 'function') {
+        window.chefalehTrack('select_zone', deliveryZoneNum !== null ? `Zone ${deliveryZoneNum}` : 'Outside area', deliveryZone);
+      }
+    });
   };
 
   function onAddressInput(address) {
-    const zone = detectZone(address);
-    const badge = document.getElementById('zone-badge');
-    if (zone) {
-      deliveryZone = zone.fee;
-      deliveryZoneNum = zone.num;
-      if (badge) {
-        badge.textContent = zone.fee === 0 ? `${zone.label} · Free` : zone.label;
-        badge.style.color = '#D4AF37';
-      }
-    } else {
-      deliveryZone = null;
-      deliveryZoneNum = null;
-      if (badge) {
-        badge.textContent = 'Outside area';
-        badge.style.color = '#C0392B';
-      }
-    }
-    updateTotals();
+    return classifyAddressRemote(address);
   }
 
   function escapeHtml(s) {
@@ -608,7 +616,9 @@
       body: JSON.stringify({
         name, phone, email, address,
         deliveryDate: formatFriday(selectedFriday),
-        zone: `Area ${deliveryZoneNum} (${deliveryZone === 0 ? 'Free' : '$' + deliveryZone})`,
+        zone: `${deliveryZoneLabel || 'Zone ' + deliveryZoneNum} (${deliveryZone === 0 ? 'Free' : '$' + deliveryZone})`,
+        zoneNum: deliveryZoneNum,
+        distanceMiles: deliveryDistanceMiles,
         cart,
         subtotal: sub.toFixed(2),
         tax: tax.toFixed(2),

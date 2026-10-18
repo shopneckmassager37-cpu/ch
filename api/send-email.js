@@ -1,6 +1,7 @@
 import { createHmac } from 'crypto';
 import { Resend } from 'resend';
 import { sbAdminFetch } from '../lib/supabaseAdmin.js';
+import { classifyAddress, getZoneFees } from '../lib/deliveryZones.js';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -97,7 +98,6 @@ export default async function handler(req, res) {
   const phone = clampText(body.phone, 40);
   const email = clampText(body.email, 200);
   const address = clampText(body.address, 300);
-  const zoneLabel = clampText(body.zone, 60);
   const notes = clampText(body.notes, 500);
   const deliveryDate = clampText(body.deliveryDate, 60);
   const rawCart = Array.isArray(body.cart) ? body.cart : [];
@@ -113,12 +113,46 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Cart is empty' });
   }
 
-  const delivery = parseFloat(body.delivery);
   const driverTip = parseFloat(body.driverTip);
   const chefTip = parseFloat(body.chefTip);
-  if (!isReasonableAmount(delivery, 200) || !isReasonableAmount(driverTip, 500) || !isReasonableAmount(chefTip, 2000)) {
+  if (!isReasonableAmount(driverTip, 500) || !isReasonableAmount(chefTip, 2000)) {
     return res.status(400).json({ error: 'Invalid order totals' });
   }
+
+  // Revalidate the delivery zone server-side — the fee charged always comes
+  // from this recomputation, never from whatever the client sent. A failed
+  // classification (geocoding/routing down, or genuinely outside our
+  // delivery area) rejects the order rather than guessing a fee.
+  let zoneResult;
+  try {
+    zoneResult = await classifyAddress(address);
+  } catch (e) {
+    return res.status(503).json({ error: "We couldn't verify your delivery address right now. Please try again in a moment." });
+  }
+  if (!zoneResult.ok) {
+    const message = zoneResult.reason === 'outside_area'
+      ? "This address is outside our delivery area. Message us on WhatsApp or call (305) 985-0770 to check availability."
+      : "We couldn't verify your delivery address. Please double-check it and try again, or message us on WhatsApp.";
+    return res.status(400).json({ error: message });
+  }
+
+  let zoneFees;
+  try {
+    zoneFees = await getZoneFees();
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+  const zoneInfo = zoneFees[zoneResult.zoneNum];
+  if (!zoneInfo) {
+    return res.status(500).json({ error: 'Delivery zone pricing not configured' });
+  }
+  const delivery = zoneInfo.fee;
+  const zoneNum = zoneResult.zoneNum;
+  const distanceMiles = zoneResult.distanceMiles !== null && zoneResult.distanceMiles !== undefined
+    ? Math.round(zoneResult.distanceMiles * 10) / 10
+    : null;
+  // The label always reflects our own recomputed zone, never whatever the client sent.
+  const zoneLabel = `${zoneInfo.label} (${delivery === 0 ? 'Free' : '$' + delivery.toFixed(2)})${distanceMiles !== null ? ` · ${distanceMiles} mi` : ''}`;
 
   // Recompute the subtotal/tax server-side from real menu prices — never trust client-sent prices.
   let catalog;
@@ -236,6 +270,8 @@ export default async function handler(req, res) {
         session_id: sessionId,
         name, email, phone, address,
         zone: zoneLabel,
+        zone_num: zoneNum,
+        driving_distance_miles: distanceMiles,
         delivery_date: deliveryDate || null,
         notes: notes || null,
         items: cart,

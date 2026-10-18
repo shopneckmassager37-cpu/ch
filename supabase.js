@@ -52,6 +52,14 @@ async function getAllergens() {
   return sbFetch('allergens?select=*&order=sort_order.asc');
 }
 
+async function getDeliveryZones() {
+  return sbFetch('delivery_zones?select=*&order=zone_num.asc');
+}
+
+async function updateDeliveryZone(zoneNum, data) {
+  return adminFetch('delivery-zones', { method: 'PATCH', body: JSON.stringify({ zone_num: zoneNum, ...data }) });
+}
+
 async function updateProduct(id, data) {
   return adminFetch('products', { method: 'PATCH', body: JSON.stringify({ id, ...data }) });
 }

@@ -40,6 +40,7 @@
       <button onclick="showTab('products')" id="tab-products" class="tab-btn px-4 py-1.5 rounded text-sm text-gray-400 hover:text-white">Products</button>
       <button onclick="showTab('categories')" id="tab-categories" class="tab-btn px-4 py-1.5 rounded text-sm text-gray-400 hover:text-white">Categories</button>
       <button onclick="showTab('allergens')" id="tab-allergens" class="tab-btn px-4 py-1.5 rounded text-sm text-gray-400 hover:text-white">Allergens</button>
+      <button onclick="showTab('delivery')" id="tab-delivery" class="tab-btn px-4 py-1.5 rounded text-sm text-gray-400 hover:text-white">Delivery Zones</button>
       <button onclick="showTab('analytics')" id="tab-analytics" class="tab-btn px-4 py-1.5 rounded text-sm text-gray-400 hover:text-white">Analytics</button>
       <a href="/menu" target="_blank" class="text-xs text-gray-400 hover:text-white ml-2">↗ View Menu</a>
       <button onclick="doLogout()" class="text-xs text-gray-500 hover:text-white ml-2">Logout</button>
@@ -93,6 +94,15 @@
     </div>
     <p class="text-xs text-gray-400 mb-3">Drag to reorder. This list is what appears as checkboxes when editing a product's allergens, and as tags on the public menu.</p>
     <div id="allergens-list" class="space-y-2"></div>
+  </div>
+
+  <!-- DELIVERY ZONES TAB -->
+  <div id="tab-delivery-panel" class="p-6 hidden">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold text-gray-800">Delivery Zones</h2>
+    </div>
+    <p class="text-xs text-gray-400 mb-3">Zone boundaries and the driving-distance origin are set in code (lib/deliveryZones.js). Fees here take effect immediately on the live site.</p>
+    <div id="delivery-zones-list" class="space-y-2"></div>
   </div>
 
   <!-- ANALYTICS TAB -->
@@ -249,6 +259,7 @@
 let categories = [];
 let products = [];
 let allergens = [];
+let deliveryZones = [];
 let activeCatFilter = 'all';
 let dragSrcEl = null;
 
@@ -298,7 +309,7 @@ if (sessionStorage.getItem('admin_auth') === '1') {
 
 // ── TABS ──
 function showTab(name) {
-  ['orders','products','categories','allergens','analytics'].forEach(t => {
+  ['orders','products','categories','allergens','delivery','analytics'].forEach(t => {
     document.getElementById(`tab-${t}-panel`).classList.toggle('hidden', t !== name);
     const btn = document.getElementById(`tab-${t}`);
     if (t === name) { btn.classList.add('bg-white','text-gray-900','font-medium'); btn.classList.remove('text-gray-400'); }
@@ -310,11 +321,12 @@ function showTab(name) {
 // ── LOAD DATA ──
 async function loadAll() {
   loadOrders();   // the tab that opens first — let it fill in on its own
-  [categories, products, allergens] = await Promise.all([getCategories(), getProducts(), getAllergens()]);
+  [categories, products, allergens, deliveryZones] = await Promise.all([getCategories(), getProducts(), getAllergens(), getDeliveryZones()]);
   renderCategoryFilter();
   renderProductsList();
   renderCategoriesList();
   renderAllergensList();
+  renderDeliveryZonesList();
 }
 
 // ── SAVE STATUS ──
@@ -327,6 +339,36 @@ function flashError() {
   const el = document.getElementById('save-error');
   el.classList.remove('hidden');
   setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+// ── DELIVERY ZONES ──
+function renderDeliveryZonesList() {
+  const el = document.getElementById('delivery-zones-list');
+  el.innerHTML = deliveryZones.map(z => `
+    <div class="bg-white rounded-lg border border-gray-100 px-4 py-3 flex items-center gap-3">
+      <div class="flex-1">
+        <span class="font-medium text-sm text-gray-800">${z.label}</span>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <span class="text-xs text-gray-400">$</span>
+        <input type="number" min="0" step="1" value="${z.fee}" data-zone="${z.zone_num}"
+          onchange="saveDeliveryZoneFee(${z.zone_num}, this.value)"
+          class="w-20 border border-gray-200 rounded px-2 py-1.5 text-sm text-right focus:outline-none focus:border-blue-400"/>
+      </div>
+    </div>`).join('');
+}
+
+async function saveDeliveryZoneFee(zoneNum, value) {
+  const fee = parseFloat(value);
+  if (!Number.isFinite(fee) || fee < 0) { flashError(); return; }
+  try {
+    await updateDeliveryZone(zoneNum, { fee });
+    const z = deliveryZones.find(dz => dz.zone_num === zoneNum);
+    if (z) z.fee = fee;
+    flashSaved();
+  } catch (e) {
+    flashError();
+  }
 }
 
 // ── CATEGORY FILTER ──
