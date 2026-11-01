@@ -243,6 +243,12 @@ function openDrawer() {
   const o = document.getElementById('drawer-overlay');
   if (d) d.classList.add('open');
   if (o) o.classList.remove('hidden');
+  // The WhatsApp bubble floats at the same bottom-right corner as the
+  // drawer's own "Proceed to Checkout" button (it's z-index 100, above the
+  // drawer's 50) and sits right on top of it on mobile — hide it while the
+  // drawer is open so it can't be tapped by mistake instead of checkout.
+  const wa = document.getElementById('whatsapp-btn');
+  if (wa) wa.style.display = 'none';
   if (typeof window.chefalehTrack === 'function') window.chefalehTrack('cart_open');
   renderDrawer();
 }
@@ -252,6 +258,8 @@ function closeDrawer() {
   const o = document.getElementById('drawer-overlay');
   if (d) d.classList.remove('open');
   if (o) o.classList.add('hidden');
+  const wa = document.getElementById('whatsapp-btn');
+  if (wa) wa.style.display = '';
 }
 
 function renderDrawer() {
